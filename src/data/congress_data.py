@@ -2,255 +2,202 @@
 # -*- coding: utf-8 -*-
 
 """
-Module for scraping congressional trading data from Senate Stock Watcher.
+Congress data scraper using Senate Stock Watcher API.
+This module scrapes Congress trading data and provides signals.
 """
 
 import logging
 import requests
-from bs4 import BeautifulSoup
-import pandas as pd
+import json
 from datetime import datetime, timedelta
-import re
-import time
-import random
+from src.utils.api_error_handler import APIErrorHandler
 
 logger = logging.getLogger(__name__)
 
 class SenateScraper:
     """
-    Class for scraping and processing congressional trading data from Senate Stock Watcher.
-    Focuses on Senator trades below a certain size threshold.
+    Scraper for Senate Stock Watcher data.
     """
     
     def __init__(self, max_transaction_size=1000000, delay_hours=24, db_manager=None):
         """
-        Initialize the Senate Stock Watcher scraper.
+        Initialize the SenateScraper.
         
         Args:
             max_transaction_size (float): Maximum transaction size to consider
             delay_hours (int): Hours to delay after filing before considering the trade
-            db_manager (DatabaseManager): Database manager for caching results
+            db_manager: Database manager instance
         """
         self.max_transaction_size = max_transaction_size
         self.delay_hours = delay_hours
         self.db_manager = db_manager
-        self.base_url = "https://www.senatestockwatcher.com"
-        self.trades_url = f"{self.base_url}/trades"
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+        self.api_url = "https://senatestockwatcher.com/api"
+        self.retry_count = 3
+        self.timeout = 10  # seconds
         
+        logger.info("SenateScraper initialized")
+    
     def fetch_latest_data(self):
         """
-        Gets latest Senator trades from Senate Stock Watcher.
-        Applies 24hr delay and $1M cap as specified.
+        Fetch latest Congress trading data.
         
         Returns:
-            list: List of dictionaries containing filtered Congress trades
+            list: List of processed Congress trades
         """
-        logger.info("Fetching Congress trades from Senate Stock Watcher")
-        
-        # Check if we have cached data in the database
-        if self.db_manager:
-            cached_data = self._get_cached_data()
-            if cached_data:
-                logger.info(f"Using {len(cached_data)} cached Congress trades")
-                return cached_data
+        logger.info("Fetching latest Congress data")
         
         try:
-            # Fetch the main page with latest trades
-            response = requests.get(self.trades_url, headers=self.headers)
-            response.raise_for_status()
+            # Try to fetch data from API
+            trades = self._fetch_from_api()
             
-            # Parse the HTML
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Find the main container with trades
-            trade_cards = soup.find_all('div', {'class': 'trade-card'})
-            if not trade_cards:
-                logger.error("Could not find Congress trades")
-                return []
-            
-            # Process trades
-            trades = []
-            
-            for card in trade_cards:
-                # Extract trade data
-                trade_data = {}
+            if trades and len(trades) > 0:
+                logger.info(f"Successfully fetched {len(trades)} Congress trades")
                 
-                # Date
-                date_elem = card.find('div', {'class': 'filing-date'})
-                if date_elem:
-                    date_str = date_elem.text.strip()
-                    try:
-                        # Handle different date formats
-                        match = re.search(r'(\d{1,2})/(\d{1,2})/(\d{4})', date_str)
-                        if match:
-                            month, day, year = match.groups()
-                            trade_data['date'] = datetime(int(year), int(month), int(day))
-                        else:
-                            # Try another format
-                            trade_data['date'] = datetime.strptime(date_str, '%B %d, %Y')
-                    except (ValueError, AttributeError):
-                        # Default to current date if parsing fails
-                        trade_data['date'] = datetime.now()
-                else:
-                    trade_data['date'] = datetime.now()
+                # Store in database if available
+                if self.db_manager:
+                    self._store_in_database(trades)
                 
-                # Check if the trade meets the delay requirement
-                time_since_filing = datetime.now() - trade_data['date']
-                if time_since_filing.total_seconds() < self.delay_hours * 3600:
-                    continue  # Skip trades that are too recent
-                
-                # Politician name
-                politician_elem = card.find('div', {'class': 'politician-name'})
-                trade_data['politician'] = politician_elem.text.strip() if politician_elem else "Unknown"
-                
-                # Ticker and company
-                ticker_elem = card.find('div', {'class': 'ticker'})
-                company_elem = card.find('div', {'class': 'company-name'})
-                
-                if ticker_elem:
-                    # Extract ticker from element
-                    ticker_text = ticker_elem.text.strip()
-                    # Clean up ticker (remove $ symbol if present)
-                    trade_data['ticker'] = ticker_text.replace('$', '').strip().upper()
-                else:
-                    continue  # Skip trades without ticker
-                
-                trade_data['company'] = company_elem.text.strip() if company_elem else "Unknown"
-                
-                # Transaction type and value
-                transaction_elem = card.find('div', {'class': 'transaction-type'})
-                value_elem = card.find('div', {'class': 'value'})
-                
-                if transaction_elem:
-                    trade_data['transaction_type'] = transaction_elem.text.strip()
-                else:
-                    continue  # Skip trades without transaction type
-                
-                # Parse value
-                if value_elem:
-                    value_text = value_elem.text.strip()
-                    # Extract value range (e.g., "$15,001 - $50,000")
-                    range_match = re.search(r'\$([0-9,]+)(?:\s*-\s*\$([0-9,]+))?', value_text)
-                    
-                    if range_match:
-                        # Get the lower and upper bounds
-                        lower_bound = range_match.group(1).replace(',', '')
-                        upper_bound = range_match.group(2).replace(',', '') if range_match.group(2) else lower_bound
-                        
-                        # Calculate average value
-                        try:
-                            lower = float(lower_bound)
-                            upper = float(upper_bound)
-                            trade_data['estimated_value'] = (lower + upper) / 2
-                        except ValueError:
-                            trade_data['estimated_value'] = 0
-                    else:
-                        # Try to extract a single value
-                        value_match = re.search(r'\$([0-9,]+)', value_text)
-                        if value_match:
-                            try:
-                                trade_data['estimated_value'] = float(value_match.group(1).replace(',', ''))
-                            except ValueError:
-                                trade_data['estimated_value'] = 0
-                        else:
-                            trade_data['estimated_value'] = 0
-                else:
-                    trade_data['estimated_value'] = 0
-                
-                # Filter by maximum transaction size
-                if trade_data['estimated_value'] > self.max_transaction_size:
-                    continue
-                
-                # Asset type (stock, option, etc.)
-                asset_elem = card.find('div', {'class': 'asset-type'})
-                trade_data['asset_type'] = asset_elem.text.strip() if asset_elem else "Stock"
-                
-                # Skip if not a stock
-                if not any(asset_type in trade_data['asset_type'].lower() for asset_type in ['stock', 'common', 'share']):
-                    continue
-                
-                # Determine signal based on transaction type
-                if any(buy_term in trade_data['transaction_type'].lower() for buy_term in ['purchase', 'buy']):
-                    trade_data['signal'] = 'BULLISH'
-                    # Scale confidence by value, max 0.8 since Congress trades are less reliable than insider
-                    trade_data['confidence'] = min(0.8, trade_data['estimated_value'] / self.max_transaction_size)
-                elif any(sell_term in trade_data['transaction_type'].lower() for sell_term in ['sale', 'sell']):
-                    trade_data['signal'] = 'BEARISH'
-                    trade_data['confidence'] = min(0.8, trade_data['estimated_value'] / self.max_transaction_size)
-                else:
-                    continue  # Skip trades that are neither buys nor sells
-                
-                # Add source information
-                trade_data['source'] = 'congress'
-                trade_data['source_detail'] = 'Senate Stock Watcher'
-                
-                # Add to trades list
-                trades.append(trade_data)
-            
-            logger.info(f"Found {len(trades)} filtered Congress trades")
-            
-            # Cache in database if available
-            if self.db_manager and trades:
-                self._cache_trades(trades)
-            
-            return trades
-            
-        except Exception as e:
-            logger.error(f"Error fetching Congress trades: {e}", exc_info=True)
-            return []
-    
-    def _get_cached_data(self):
-        """
-        Get cached Congress trades from database.
-        
-        Returns:
-            list: List of cached Congress trades
-        """
-        if not self.db_manager:
-            return None
-            
-        try:
-            # Get trades from the last week (Congress trades are less frequent)
-            query = """
-            SELECT * FROM congress_trades 
-            WHERE date >= datetime('now', '-7 day')
-            """
-            
-            trades = self.db_manager.execute_query(query)
-            if trades:
                 return trades
+            else:
+                logger.warning("No Congress trades found or empty response from API")
+                return self._get_sample_data()
                 
-        except Exception as e:
-            logger.error(f"Error getting cached Congress trades: {e}", exc_info=True)
-            
-        return None
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error fetching Congress data: {e}")
+            return self._get_sample_data()
     
-    def _cache_trades(self, trades):
+    def _fetch_from_api(self):
         """
-        Cache Congress trades in database.
+        Internal method to fetch data from Senate Stock Watcher API.
+        
+        Returns:
+            list: List of processed Congress trades
+        """
+        processed_trades = []
+        
+        for attempt in range(self.retry_count):
+            try:
+                logger.info(f"Attempting to fetch Congress data (Attempt {attempt + 1}/{self.retry_count})")
+                
+                # Endpoint for recent trades
+                endpoint = f"{self.api_url}/trades/recent"
+                
+                response = requests.get(endpoint, timeout=self.timeout)
+                
+                if response.status_code == 200:
+                    trades = response.json()
+                    
+                    # Process each trade
+                    for trade in trades:
+                        processed_trade = self._process_trade(trade)
+                        if processed_trade:
+                            processed_trades.append(processed_trade)
+                    
+                    return processed_trades
+                    
+                elif response.status_code == 404:
+                    logger.warning(f"Senate Stock Watcher API returned 404. Endpoint may have changed: {endpoint}")
+                    break
+                    
+                else:
+                    logger.warning(f"Senate Stock Watcher API returned status {response.status_code}")
+            
+            except Exception as e:
+                logger.error(f"Error in attempt {attempt + 1}: {e}")
+                
+            # Wait before retry if not the last attempt
+            if attempt < self.retry_count - 1:
+                import time
+                time.sleep(2)
+        
+        logger.warning("All attempts to fetch Congress data failed")
+        return []
+    
+    def _process_trade(self, trade):
+        """
+        Process a raw trade from the API into standard format.
         
         Args:
-            trades (list): List of Congress trades to cache
+            trade (dict): Raw trade data from API
+            
+        Returns:
+            dict: Processed trade or None if invalid
+        """
+        try:
+            # Extract relevant fields (adapt based on actual API response)
+            ticker = trade.get('ticker')
+            transaction_type = trade.get('transaction_type')
+            value = trade.get('amount')
+            
+            # Skip if missing critical information
+            if not ticker or not transaction_type:
+                logger.debug(f"Skipping trade with missing data: {trade}")
+                return None
+            
+            # Convert date string to datetime
+            trade_date = datetime.strptime(trade.get('transaction_date', ''), "%Y-%m-%d")
+            
+            # Skip if trade is too recent (respect delay_hours)
+            if datetime.now() - trade_date < timedelta(hours=self.delay_hours):
+                logger.debug(f"Skipping trade that is too recent: {trade_date}")
+                return None
+            
+            # Skip if the value is above our max transaction size
+            if value and float(value) > self.max_transaction_size:
+                logger.debug(f"Skipping trade with value {value} > {self.max_transaction_size}")
+                return None
+            
+            # Determine signal (buy = bullish, sell = bearish)
+            is_buy = "buy" in transaction_type.lower() or "purchase" in transaction_type.lower()
+            signal = 'BULLISH' if is_buy else 'BEARISH'
+            
+            # Calculate confidence based on value relative to max
+            confidence = min(0.9, value / self.max_transaction_size if value else 0.5)
+            
+            return {
+                'date': trade_date,
+                'politician': trade.get('senator', 'Unknown'),
+                'ticker': ticker,
+                'company': trade.get('asset_description', ticker),
+                'transaction_type': transaction_type,
+                'estimated_value': value,
+                'asset_type': trade.get('asset_type', 'Stock'),
+                'signal': signal,
+                'confidence': confidence,
+                'source': 'congress',
+                'source_detail': 'Senate Stock Watcher',
+                'is_sample_data': False
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing trade: {e}")
+            return None
+    
+    def _store_in_database(self, trades):
+        """
+        Store trades in the database.
+        
+        Args:
+            trades (list): List of processed trades
         """
         if not self.db_manager:
             return
-            
+        
         try:
             for trade in trades:
-                # Convert datetime to string if needed
-                if isinstance(trade.get('date'), datetime):
-                    trade['date'] = trade['date'].strftime('%Y-%m-%d %H:%M:%S')
-                    
-                # Add creation timestamp
-                trade['created_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                
-                # Insert into database
-                self.db_manager.insert('congress_trades', trade)
-                
-            logger.info(f"Cached {len(trades)} Congress trades in database")
-            
+                self.db_manager.insert_congress_trade(trade)
+            logger.info(f"Stored {len(trades)} Congress trades in database")
         except Exception as e:
-            logger.error(f"Error caching Congress trades: {e}", exc_info=True)
+            logger.error(f"Error storing Congress trades in database: {e}")
+    
+    def _get_sample_data(self):
+        """
+        Generate sample Congress trade data for testing/fallback purposes.
+        
+        Returns:
+            list: List of sample Congress trades
+        """
+        return APIErrorHandler.handle_congress_api_error(
+            max_transaction_size=self.max_transaction_size,
+            delay_hours=self.delay_hours
+        )

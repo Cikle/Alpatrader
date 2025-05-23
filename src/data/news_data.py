@@ -319,10 +319,9 @@ class NewsSentimentAnalyzer:
                 return self._analyze_with_finnhub(news_item)
             except Exception as e:
                 logger.error(f"Error analyzing with Finnhub: {e}")
-        
-        # Fall back to basic sentiment analysis
+          # Fall back to basic sentiment analysis
         return self._analyze_basic_sentiment(news_item)
-    
+        
     def _analyze_with_finnhub(self, news_item):
         """
         Analyze sentiment using Finnhub API.
@@ -340,16 +339,43 @@ class NewsSentimentAnalyzer:
         if cache_key in self.sentiment_cache:
             return self.sentiment_cache[cache_key]
         
+        # Check if we have a valid API key
+        if not self.finnhub_key or self.finnhub_key == "YOUR_FINNHUB_KEY":
+            logger.warning("No valid Finnhub API key provided. Using basic sentiment analysis.")
+            return self._analyze_basic_sentiment(news_item)
+        
         # Make API request
         params = {
             'symbol': ticker,
             'token': self.finnhub_key
         }
         
-        response = requests.get(self.finnhub_url, params=params)
-        response.raise_for_status()
-        
-        data = response.json()
+        try:
+            response = requests.get(self.finnhub_url, params=params, timeout=10)
+            # Handle various error codes
+            if response.status_code == 403:
+                logger.warning("Finnhub API returned 403 Forbidden. API key may be invalid or rate limit exceeded.")
+                return self._analyze_basic_sentiment(news_item)
+            elif response.status_code == 429:
+                logger.warning("Finnhub API rate limit exceeded. Using basic sentiment analysis.")
+                return self._analyze_basic_sentiment(news_item)
+            elif response.status_code != 200:
+                logger.warning(f"Finnhub API returned status code {response.status_code}. Using basic sentiment analysis instead.")
+                return self._analyze_basic_sentiment(news_item)
+            
+            data = response.json()
+            
+            # Check if response contains actual data
+            if not data or not data.get('sentiment'):
+                logger.warning(f"Finnhub returned empty response for {ticker}. Using basic sentiment analysis.")
+                return self._analyze_basic_sentiment(news_item)
+                
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Finnhub API request failed: {e}. Using basic sentiment analysis instead.")
+            return self._analyze_basic_sentiment(news_item)
+        except json.JSONDecodeError:
+            logger.warning(f"Failed to parse Finnhub response for {ticker}. Using basic sentiment analysis.")
+            return self._analyze_basic_sentiment(news_item)
         
         # Extract sentiment
         sentiment_score = data.get('sentiment', {}).get('signal', 0)
