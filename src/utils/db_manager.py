@@ -102,7 +102,7 @@ class DatabaseManager:
             )
             ''')
             
-            # Create trades table for executed trades
+            # Create trades table (for executed trades)
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,20 +111,23 @@ class DatabaseManager:
                 action TEXT,
                 quantity INTEGER,
                 price REAL,
-                total_value REAL,
-                signal TEXT,
+                value REAL,
+                signal_id INTEGER,
+                signal_type TEXT,
                 confidence REAL,
-                source TEXT,
-                source_detail TEXT,
                 created_at TEXT
             )
             ''')
             
-            # Create index on ticker and date
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_insider_ticker_date ON insider_trades (ticker, date)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_congress_ticker_date ON congress_trades (ticker, date)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_news_ticker_date ON news (ticker, date)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_trades_ticker_date ON trades (ticker, date)')
+            # Create indices for faster lookups
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_insider_ticker ON insider_trades (ticker)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_insider_date ON insider_trades (date)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_congress_ticker ON congress_trades (ticker)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_congress_date ON congress_trades (date)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_news_ticker ON news (ticker)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_news_date ON news (date)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_trades_ticker ON trades (ticker)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_trades_date ON trades (date)')
             
             conn.commit()
             conn.close()
@@ -133,6 +136,80 @@ class DatabaseManager:
             
         except Exception as e:
             logger.error(f"Error initializing database: {e}", exc_info=True)
+    
+    def insert(self, table, data):
+        """
+        Insert data into a table.
+        
+        Args:
+            table (str): Table name
+            data (dict): Data to insert
+            
+        Returns:
+            int: Row ID of inserted record or None if error
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Filter out keys that don't correspond to columns in the table
+            columns = self._get_table_columns(cursor, table)
+            filtered_data = {k: v for k, v in data.items() if k in columns}
+            
+            # Build SQL query
+            columns_str = ', '.join(filtered_data.keys())
+            placeholders = ', '.join(['?' for _ in filtered_data])
+            
+            query = f"INSERT INTO {table} ({columns_str}) VALUES ({placeholders})"
+            
+            # Execute query
+            cursor.execute(query, list(filtered_data.values()))
+            
+            # Get ID of inserted row
+            row_id = cursor.lastrowid
+            
+            conn.commit()
+            conn.close()
+            
+            return row_id
+            
+        except Exception as e:
+            logger.error(f"Error inserting into {table}: {e}", exc_info=True)
+            return None
+    
+    def execute_query(self, query, params=None):
+        """
+        Execute a SQL query and return results as a list of dictionaries.
+        
+        Args:
+            query (str): SQL query to execute
+            params (tuple): Parameters for the query
+            
+        Returns:
+            list: Query results as a list of dictionaries
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            # Enable row factory to get results as dictionaries
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            # Execute query
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+            
+            # Get results
+            results = [dict(row) for row in cursor.fetchall()]
+            
+            conn.close()
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error executing query: {e}", exc_info=True)
+            return []
     
     def save_insider_trades(self, trades):
         """
@@ -592,3 +669,168 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error getting signals for {ticker}: {e}", exc_info=True)
             return {'insider': [], 'congress': [], 'news': []}
+    
+    def get_data(self, table, filters=None, order_by=None, limit=None):
+        """
+        Get data from a table with optional filters.
+        
+        Args:
+            table (str): Table name
+            filters (dict): Dictionary of column=value pairs for WHERE clause
+            order_by (str): Column to order by (with optional DESC)
+            limit (int): Maximum number of records to return
+            
+        Returns:
+            list: Query results as a list of dictionaries
+        """
+        try:
+            query = f"SELECT * FROM {table}"
+            
+            params = []
+            
+            # Add WHERE clause if filters provided
+            if filters:
+                where_clauses = []
+                for column, value in filters.items():
+                    where_clauses.append(f"{column} = ?")
+                    params.append(value)
+                
+                query += f" WHERE {' AND '.join(where_clauses)}"
+            
+            # Add ORDER BY clause if provided
+            if order_by:
+                query += f" ORDER BY {order_by}"
+            
+            # Add LIMIT clause if provided
+            if limit:
+                query += f" LIMIT {limit}"
+            
+            return self.execute_query(query, tuple(params))
+            
+        except Exception as e:
+            logger.error(f"Error getting data from {table}: {e}", exc_info=True)
+            return []
+    
+    def delete_old_data(self, days=30):
+        """
+        Delete data older than the specified number of days.
+        
+        Args:
+            days (int): Number of days to keep
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Delete old data from all tables
+            for table in ['insider_trades', 'congress_trades', 'news', 'trades']:
+                cursor.execute(f"""
+                DELETE FROM {table}
+                WHERE date < datetime('now', '-{days} day')
+                """)
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Deleted data older than {days} days")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error deleting old data: {e}", exc_info=True)
+            return False
+    
+    def _get_table_columns(self, cursor, table):
+        """
+        Get column names for a table.
+        
+        Args:
+            cursor (sqlite3.Cursor): Database cursor
+            table (str): Table name
+            
+        Returns:
+            list: List of column names
+        """
+        cursor.execute(f"PRAGMA table_info({table})")
+        return [row[1] for row in cursor.fetchall()]
+    
+    def export_to_csv(self, table, output_path=None):
+        """
+        Export a table to a CSV file.
+        
+        Args:
+            table (str): Table name
+            output_path (str): Path to output file
+            
+        Returns:
+            str: Path to the exported file or None if error
+        """
+        try:
+            if not output_path:
+                # Use default path in logs directory
+                os.makedirs('exports', exist_ok=True)
+                output_path = os.path.join('exports', f"{table}_{datetime.now().strftime('%Y%m%d')}.csv")
+            
+            # Get data
+            data = self.get_data(table)
+            
+            if not data:
+                logger.warning(f"No data found in {table}")
+                return None
+            
+            # Convert to DataFrame and export
+            df = pd.DataFrame(data)
+            df.to_csv(output_path, index=False)
+            
+            logger.info(f"Exported {len(df)} rows from {table} to {output_path}")
+            
+            return output_path
+            
+        except Exception as e:
+            logger.error(f"Error exporting {table} to CSV: {e}", exc_info=True)
+            return None
+    
+    def get_statistics(self):
+        """
+        Get statistics about the database.
+        
+        Returns:
+            dict: Dictionary with statistics
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            stats = {}
+            
+            # Get table counts
+            for table in ['insider_trades', 'congress_trades', 'news', 'trades']:
+                cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                stats[f"{table}_count"] = cursor.fetchone()[0]
+            
+            # Get signal counts
+            cursor.execute("SELECT signal, COUNT(*) FROM insider_trades GROUP BY signal")
+            stats['insider_signals'] = dict(cursor.fetchall())
+            
+            cursor.execute("SELECT signal, COUNT(*) FROM congress_trades GROUP BY signal")
+            stats['congress_signals'] = dict(cursor.fetchall())
+            
+            cursor.execute("SELECT signal, COUNT(*) FROM news GROUP BY signal")
+            stats['news_signals'] = dict(cursor.fetchall())
+            
+            # Get date ranges
+            for table in ['insider_trades', 'congress_trades', 'news', 'trades']:
+                cursor.execute(f"SELECT MIN(date), MAX(date) FROM {table}")
+                min_date, max_date = cursor.fetchone()
+                stats[f"{table}_date_range"] = (min_date, max_date)
+            
+            conn.close()
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error getting database statistics: {e}", exc_info=True)
+            return {}

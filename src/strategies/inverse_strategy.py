@@ -15,7 +15,6 @@ class InverseStrategy:
     Class for implementing inverse trading strategy based on signals.
     Takes the opposite side of insider, congress, and news signals.
     """
-    
     def __init__(self, alpaca, signal_processor, config):
         """
         Initialize the inverse trading strategy.
@@ -31,6 +30,13 @@ class InverseStrategy:
         
         # Read portfolio parameters from config
         self.max_position_size_percent = config.getfloat('trading', 'max_position_size_percent', fallback=5.0)
+        
+        # Read options parameters from config
+        self.use_options = config.getboolean('options', 'use_options', fallback=True)
+        self.min_option_confidence = config.getfloat('options', 'min_option_confidence', fallback=0.7)
+        self.max_option_position_percent = config.getfloat('options', 'max_option_position_percent', fallback=2.0)
+        self.target_delta = config.getfloat('options', 'target_delta', fallback=0.20)
+        self.target_days_to_expiry = config.getint('options', 'target_days_to_expiry', fallback=30)
         
         # Portfolio constraints
         self.max_positions = 10
@@ -420,3 +426,183 @@ class InverseStrategy:
         price = random.uniform(10, 500)
         
         return price
+    def execute_option_trades(self, signals):
+        """
+        Execute options trades based on the provided signals.
+        Takes the opposite side of the signals (inverse strategy).
+        
+        Args:
+            signals (list): List of signals with trading instructions
+            
+        Returns:
+            list: List of executed option trades
+        """
+        if not signals or not self.use_options:
+            logger.info("No signals to execute option trades or options trading disabled")
+            return []
+            
+        logger.info(f"Executing option trades for {len(signals)} signals")
+        
+        # Get account information
+        account = self.alpaca.get_account()
+        if not account:
+            logger.error("Could not get account information")
+            return []
+            
+        # Calculate available equity for new positions
+        portfolio_value = float(account.equity)
+        buying_power = float(account.buying_power)
+        
+        # Get existing options positions
+        option_positions = self.alpaca.get_option_positions() if hasattr(self.alpaca, 'get_option_positions') else []
+        
+        # Calculate max option position size (as a percentage of portfolio value)
+        max_option_position = portfolio_value * (self.max_option_position_percent / 100)
+        
+        executed_trades = []
+        
+        # Sort signals by confidence and source count
+        signals.sort(key=lambda x: (x.get('source_count', 0), x.get('confidence', 0)), reverse=True)
+        
+        for signal in signals:
+            ticker = signal.get('ticker')
+            signal_direction = signal.get('signal')  # BULLISH or BEARISH
+            confidence = signal.get('confidence', 0)
+            position_multiplier = signal.get('position_multiplier', 1.0)
+            
+            # Skip low confidence signals
+            if confidence < 0.5:
+                logger.info(f"Skipping low confidence signal for {ticker}")
+                continue
+                
+            # Check if we already have an options position for this ticker
+            existing_position = next((p for p in option_positions if p.underlying_symbol == ticker), None)
+            
+            # Calculate position size based on signal strength
+            position_value = max_option_position * position_multiplier
+            
+            # Get current price
+            current_price = self.alpaca.get_last_price(ticker)
+            if not current_price:
+                logger.error(f"Could not get price for {ticker}")
+                continue
+            
+            # For inverse strategy, we trade options in the opposite direction of the signal
+            # BULLISH signal -> we buy put options (bearish position)
+            # BEARISH signal -> we buy call options (bullish position)
+            option_right = 'put' if signal_direction == 'BULLISH' else 'call'
+              # Find appropriate options contract using configured parameters
+            # For puts, we use the target delta (typically 0.20 for ~20% OTM)
+            # For calls, we use the same target delta
+            
+            # Find an options contract with target delta and desired days to expiry
+            contract = self.alpaca.find_option_contract(
+                symbol=ticker,
+                target_delta=self.target_delta,
+                right=option_right,
+                days_to_expiry=self.target_days_to_expiry,
+                max_days_range=15
+            )
+            
+            if not contract:
+                logger.error(f"Could not find suitable {option_right} option for {ticker}")
+                continue
+                
+            # Calculate number of contracts based on position value and option price
+            # Each contract is 100 shares
+            contract_price = contract.get('price', 0)
+            if contract_price <= 0:
+                logger.error(f"Invalid option price {contract_price} for {ticker}")
+                continue
+                
+            # Calculate number of contracts (position value / (contract price * 100 shares))
+            num_contracts = int(position_value / (contract_price * 100))
+            
+            # Ensure we trade at least 1 contract
+            if num_contracts < 1:
+                num_contracts = 1
+                
+            # For inverse strategy, we're taking the opposite side:
+            # BULLISH signal -> we buy put options (bearish position)
+            # BEARISH signal -> we buy call options (bullish position)
+            
+            # Execute option trade
+            trade_result = self._execute_option_trade(
+                contract.get('symbol'),
+                'BUY',  # We're always buying options in this strategy
+                num_contracts,
+                contract
+            )
+            
+            if trade_result:
+                trade_result['signal'] = signal
+                executed_trades.append(trade_result)
+                
+        logger.info(f"Executed {len(executed_trades)} option trades")
+        return executed_trades
+    
+    def _execute_option_trade(self, option_symbol, action, quantity, contract_info):
+        """
+        Execute an options trade on Alpaca.
+        
+        Args:
+            option_symbol (str): Option contract symbol
+            action (str): 'BUY' or 'SELL'
+            quantity (int): Number of contracts
+            contract_info (dict): Option contract details
+            
+        Returns:
+            dict: Trade execution details or None if failed
+        """
+        if quantity <= 0:
+            logger.warning(f"Invalid quantity {quantity} for {option_symbol}")
+            return None
+            
+        try:
+            logger.info(f"Executing {action} order for {quantity} contracts of {option_symbol}")
+            
+            # Submit option order to Alpaca
+            order = self.alpaca.submit_option_order(
+                option_symbol=option_symbol,
+                qty=quantity,
+                side=action.lower(),
+                type='market',
+                time_in_force='day'
+            )
+            
+            if not order:
+                logger.error(f"Failed to submit option order for {option_symbol}")
+                return None
+                
+            # Wait for fill
+            filled_order = self.alpaca.wait_for_order(order.id)
+            
+            if not filled_order or filled_order.status != 'filled':
+                logger.error(f"Option order for {option_symbol} was not filled")
+                return None
+                
+            fill_price = float(filled_order.filled_avg_price)
+            filled_qty = int(filled_order.filled_qty)
+            total_value = fill_price * filled_qty * 100  # 100 shares per contract
+            
+            trade_result = {
+                'ticker': contract_info.get('underlying_symbol', option_symbol.split(':')[0]),
+                'option_symbol': option_symbol,
+                'action': action,
+                'quantity': filled_qty,
+                'fill_price': fill_price,
+                'total_value': total_value,
+                'trade_date': datetime.now(),
+                'strike': contract_info.get('strike'),
+                'expiration': contract_info.get('expiration'),
+                'right': contract_info.get('right'),
+                'delta': contract_info.get('delta'),
+                'trade_type': 'OPTION'
+            }
+            
+            logger.info(f"Executed option trade: {action} {filled_qty} contracts of {option_symbol} at {fill_price}")
+            return trade_result
+            
+        except Exception as e:
+            logger.error(f"Error executing option trade for {option_symbol}: {e}", exc_info=True)
+            return None

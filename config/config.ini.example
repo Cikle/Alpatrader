@@ -21,6 +21,18 @@ max_congress_transaction_size = 1000000
 insider_delay_hours = 0
 congress_delay_hours = 24
 
+[options]
+# Whether to use options trading
+use_options = true
+# Minimum confidence threshold for options trades
+min_option_confidence = 0.7
+# Maximum percentage of portfolio to allocate to a single options trade
+max_option_position_percent = 2
+# Target delta for options (lower = more out-of-the-money)
+target_delta = 0.20
+# Target days to expiry for options contracts
+target_days_to_expiry = 30
+
 [filters]
 # Sectors to monitor - match these with your watchlist
 sectors = technology,finance,healthcare

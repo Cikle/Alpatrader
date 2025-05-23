@@ -1,11 +1,38 @@
-alpaca-trade-api
-requests
-requests-html
-beautifulsoup4
-pandas
-numpy
-python-dotenv
-newsapi-python
-finnhub-python
-sqlalchemy
-matplotlib
+# Alpatrader Dependencies
+# Core Trading Libraries
+alpaca-trade-api>=2.3.0
+alpaca-py>=0.8.0  # New Alpaca SDK for options trading support
+yfinance>=0.2.0   # Additional market data source
+
+# Web Scraping and API
+requests>=2.28.0
+requests-html>=0.10.0
+beautifulsoup4>=4.11.0
+selenium>=4.0.0   # For dynamic web scraping
+webdriver-manager>=3.8.0  # Selenium WebDriver management
+
+# Data Analysis
+pandas>=1.5.0
+numpy>=1.22.0
+sqlalchemy>=2.0.0
+
+# News & Sentiment Analysis
+newsapi-python>=0.2.6
+finnhub-python>=2.4.0
+nltk>=3.7.0
+scikit-learn>=1.0.0
+textblob>=0.17.0  # Simplified sentiment analysis
+transformers>=4.20.0  # For advanced sentiment analysis
+
+# Visualization & Reporting
+matplotlib>=3.5.0
+seaborn>=0.12.0
+plotly>=5.10.0
+
+# Utilities
+python-dotenv>=0.20.0
+tqdm>=4.64.0
+colorama>=0.4.5
+schedule>=1.1.0
+pytz>=2022.0
+configparser>=5.2.0

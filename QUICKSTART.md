@@ -34,6 +34,16 @@ Copy-Item .\config\config.ini.example .\config\config.ini
    - NewsAPI key: Get from [NewsAPI](https://newsapi.org/register)
    - Finnhub key: Get from [Finnhub](https://finnhub.io/register)
 
+3. Configure options trading parameters (optional):
+   ```ini
+   [options]
+   use_options = true
+   min_option_confidence = 0.7
+   max_option_position_percent = 2
+   target_delta = 0.20
+   target_days_to_expiry = 30
+   ```
+
 ## 3. Run the Bot
 
 ### Start the Trading Bot

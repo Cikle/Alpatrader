@@ -109,14 +109,19 @@ def main():
             # Only run during market hours
             if alpaca.is_market_open():
                 logger.info("Market is open, processing signals...")
-                
-                # Process signals and generate trades
+                  # Process signals and generate trades
                 signals = signal_processor.process_signals()
                 
-                # Execute trades based on signals
-                strategy.execute_trades(signals)
+                # Execute stock trades based on signals
+                stock_trades = strategy.execute_trades(signals)
                 
-                logger.info(f"Processed {len(signals)} signals")
+                # Execute options trades for strong signals (confidence > 0.7)
+                strong_signals = [s for s in signals if s.get('confidence', 0) > 0.7]
+                if strong_signals:
+                    option_trades = strategy.execute_option_trades(strong_signals)
+                    logger.info(f"Executed {len(option_trades)} option trades for strong signals")
+                
+                logger.info(f"Processed {len(signals)} signals ({len(stock_trades)} stock trades)")
             else:
                 # Continue to collect data even when market is closed
                 insider_scraper.fetch_latest_data()
