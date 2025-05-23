@@ -1,0 +1,30 @@
+[alpaca]
+api_key = YOUR_ALPACA_API_KEY
+api_secret = YOUR_ALPACA_API_SECRET
+base_url = https://paper-api.alpaca.markets
+data_url = https://data.alpaca.markets
+
+[news]
+newsapi_key = YOUR_NEWSAPI_KEY
+gnews_key = YOUR_GNEWS_KEY
+
+[sentiment]
+finnhub_key = YOUR_FINNHUB_KEY
+
+[trading]
+max_position_size_percent = 5
+strong_news_multiplier = 2
+congress_only_multiplier = 1
+insider_only_multiplier = 0.5
+min_insider_transaction_size = 200000
+max_congress_transaction_size = 1000000
+insider_delay_hours = 0
+congress_delay_hours = 24
+
+[filters]
+# Sectors to monitor - match these with your watchlist
+sectors = technology,finance,healthcare
+# Sectors to blacklist due to volatility
+blacklist_sectors = biotech
+# Whether to skip trades during FOMC blackout periods
+skip_fomc_blackout = true

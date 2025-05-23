@@ -1,0 +1,11 @@
+alpaca-trade-api
+requests
+requests-html
+beautifulsoup4
+pandas
+numpy
+python-dotenv
+newsapi-python
+finnhub-python
+sqlalchemy
+matplotlib
