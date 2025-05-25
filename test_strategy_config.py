@@ -10,10 +10,12 @@ import os
 import configparser
 from datetime import datetime
 
-# Add the src directory to the path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+# Add the project root directory to the path
+project_root = os.path.dirname(__file__)
+sys.path.append(project_root)
 
-from models.signal_processor import SignalProcessor
+# Try to import with the correct path
+from src.models.signal_processor import SignalProcessor
 
 def test_strategy_configuration():
     """Test the strategy configuration loading and validation."""
