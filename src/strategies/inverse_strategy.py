@@ -155,10 +155,40 @@ class InverseStrategy:
                 trade_result = self._execute_trade(ticker, action, shares)
                 if trade_result:
                     trade_result['signal'] = signal
-                    executed_trades.append(trade_result)
-                    
+                    executed_trades.append(trade_result)                    
         logger.info(f"Executed {len(executed_trades)} trades")
+        
+        # Display updated position summary if trades were executed
+        if executed_trades:
+            self._display_position_summary()
+            
         return executed_trades
+    
+    def _display_position_summary(self):
+        """Display a summary of current positions with entry prices."""
+        try:
+            positions = self.alpaca.get_positions()
+            
+            if positions:
+                logger.info(f"Current Position Summary ({len(positions)} positions):")
+                for position in positions:
+                    qty = float(position.qty)
+                    cost_basis = float(position.cost_basis)
+                    entry_price = cost_basis / abs(qty) if qty != 0 else 0
+                    current_price = float(position.current_price)
+                    unrealized_pl = float(position.unrealized_pl)
+                    unrealized_plpc = float(position.unrealized_plpc)
+                    
+                    side = 'Long' if qty > 0 else 'Short'
+                    
+                    logger.info(f"  {position.symbol}: {side} {abs(qty)} shares @ ${entry_price:.2f} "
+                               f"(Current: ${current_price:.2f}, P&L: ${unrealized_pl:,.2f} "
+                               f"[{unrealized_plpc*100:.2f}%])")
+            else:
+                logger.info("No current positions")
+                
+        except Exception as e:
+            logger.error(f"Error displaying position summary: {e}", exc_info=True)
                 
     def _execute_trade(self, ticker, action, quantity):
         """

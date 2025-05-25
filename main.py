@@ -51,6 +51,47 @@ def load_config():
     config.read(os.path.join('config', 'config.ini'))
     return config
 
+def display_portfolio_status(alpaca):
+    """Display current portfolio status including positions with entry prices."""
+    try:
+        # Get account information
+        account = alpaca.get_account()
+        if account:
+            logger.info(f"Portfolio Status - Equity: ${float(account.equity):,.2f}, "
+                       f"Buying Power: ${float(account.buying_power):,.2f}, "
+                       f"Cash: ${float(account.cash):,.2f}")
+        
+        # Get current positions
+        positions = alpaca.get_positions()
+        
+        if positions:
+            logger.info(f"Current Positions ({len(positions)} open):")
+            total_unrealized_pl = 0
+            
+            for position in positions:
+                qty = float(position.qty)
+                cost_basis = float(position.cost_basis)
+                entry_price = cost_basis / abs(qty) if qty != 0 else 0
+                current_price = float(position.current_price)
+                market_value = float(position.market_value)
+                unrealized_pl = float(position.unrealized_pl)
+                unrealized_plpc = float(position.unrealized_plpc)
+                
+                side = 'Long' if qty > 0 else 'Short'
+                total_unrealized_pl += unrealized_pl
+                
+                logger.info(f"  {position.symbol}: {side} {abs(qty)} shares | "
+                           f"Entry: ${entry_price:.2f} | Current: ${current_price:.2f} | "
+                           f"Market Value: ${market_value:,.2f} | "
+                           f"P&L: ${unrealized_pl:,.2f} ({unrealized_plpc*100:.2f}%)")
+            
+            logger.info(f"Total Unrealized P&L: ${total_unrealized_pl:,.2f}")
+        else:
+            logger.info("No open positions")
+            
+    except Exception as e:
+        logger.error(f"Error displaying portfolio status: {e}", exc_info=True)
+
 def main():
     """Main entry point for the trading bot."""
     print_disclaimer()
@@ -86,8 +127,7 @@ def main():
         finnhub_key=config['sentiment']['finnhub_key'],
         db_manager=db_manager
     )
-    
-    # Initialize signal processor and strategy
+      # Initialize signal processor and strategy
     signal_processor = SignalProcessor(
         config=config,
         insider_scraper=insider_scraper,
@@ -103,13 +143,20 @@ def main():
     
     logger.info("Alpatrader started")
     
+    # Display initial portfolio status
+    display_portfolio_status(alpaca)
+    
     # Main trading loop
     while True:
         try:
             # Only run during market hours
             if alpaca.is_market_open():
                 logger.info("Market is open, processing signals...")
-                  # Process signals and generate trades
+                
+                # Display current portfolio status before trading
+                display_portfolio_status(alpaca)
+                
+                # Process signals and generate trades
                 signals = signal_processor.process_signals()
                 
                 # Execute stock trades based on signals
@@ -122,12 +169,20 @@ def main():
                     logger.info(f"Executed {len(option_trades)} option trades for strong signals")
                 
                 logger.info(f"Processed {len(signals)} signals ({len(stock_trades)} stock trades)")
+                
+                # Display updated portfolio status after trading
+                if stock_trades or (strong_signals and len(strong_signals) > 0):
+                    logger.info("Updated portfolio status after trades:")
+                    display_portfolio_status(alpaca)
             else:
                 # Continue to collect data even when market is closed
                 insider_scraper.fetch_latest_data()
                 congress_scraper.fetch_latest_data()
                 news_analyzer.fetch_latest_news()
                 logger.info("Market is closed, updated data sources")
+                
+                # Display portfolio status periodically when market is closed
+                display_portfolio_status(alpaca)
             
             # Sleep for 15 minutes before next cycle
             time.sleep(15 * 60)
