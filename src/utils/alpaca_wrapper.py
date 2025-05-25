@@ -100,6 +100,43 @@ class AlpacaWrapper:
         except Exception as e:
             logger.error(f"Error getting positions: {e}", exc_info=True)
             return []
+    
+    def get_orders(self, status=None, symbols=None, limit=50):
+        """
+        Get orders from Alpaca.
+        
+        Args:
+            status (str): Order status filter ('filled', 'pending', etc.)
+            symbols (list): List of symbols to filter by
+            limit (int): Maximum number of orders to return
+            
+        Returns:
+            list: List of order objects
+        """
+        try:
+            if not self.api:
+                logger.error("Alpaca API not initialized")
+                return []
+            
+            # Build request parameters
+            params = {}
+            if status:
+                params['status'] = status
+            if limit:
+                params['limit'] = limit
+            
+            # Get orders
+            orders = self.api.list_orders(**params)
+            
+            # Filter by symbols if provided
+            if symbols:
+                orders = [o for o in orders if o.symbol in symbols]
+            
+            return orders
+            
+        except Exception as e:
+            logger.error(f"Error getting orders: {e}", exc_info=True)
+            return []
             
     def get_last_price(self, symbol):
         """

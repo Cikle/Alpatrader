@@ -21,6 +21,7 @@ from src.data.congress_data import SenateScraper
 from src.data.news_data import NewsSentimentAnalyzer
 from src.models.signal_processor import SignalProcessor
 from src.strategies.inverse_strategy import InverseStrategy
+from src.strategies.exit_strategy_manager import ExitStrategyManager
 from src.utils.db_manager import DatabaseManager
 from src.utils.alpaca_wrapper import AlpacaWrapper
 
@@ -133,20 +134,24 @@ def main():
         insider_scraper=insider_scraper,
         congress_scraper=congress_scraper,
         news_analyzer=news_analyzer
+    )    # Initialize exit strategy manager
+    exit_manager = ExitStrategyManager(
+        alpaca=alpaca,
+        config=config
     )
     
     strategy = InverseStrategy(
         alpaca=alpaca,
         signal_processor=signal_processor,
-        config=config
+        config=config,
+        exit_manager=exit_manager
     )
     
     logger.info("Alpatrader started")
     
     # Display initial portfolio status
     display_portfolio_status(alpaca)
-    
-    # Main trading loop
+      # Main trading loop
     while True:
         try:
             # Only run during market hours
@@ -155,6 +160,17 @@ def main():
                 
                 # Display current portfolio status before trading
                 display_portfolio_status(alpaca)
+                
+                # Check and execute exit strategies first
+                logger.info("Checking exit conditions...")
+                positions_to_close = exit_manager.check_exit_conditions()
+                
+                if positions_to_close:
+                    logger.info(f"Found {len(positions_to_close)} positions to close based on exit strategies")
+                    executed_exits = exit_manager.execute_exits(positions_to_close)
+                    logger.info(f"Executed {len(executed_exits)} exit trades")
+                else:
+                    logger.info("No positions meet exit criteria")
                 
                 # Process signals and generate trades
                 signals = signal_processor.process_signals()
@@ -171,7 +187,7 @@ def main():
                 logger.info(f"Processed {len(signals)} signals ({len(stock_trades)} stock trades)")
                 
                 # Display updated portfolio status after trading
-                if stock_trades or (strong_signals and len(strong_signals) > 0):
+                if stock_trades or (strong_signals and len(strong_signals) > 0) or (positions_to_close and len(positions_to_close) > 0):
                     logger.info("Updated portfolio status after trades:")
                     display_portfolio_status(alpaca)
             else:

@@ -15,7 +15,6 @@ class SignalProcessor:
     Class for processing and combining signals from insider, congress, and news sources.
     Implements the signal hierarchy as specified.
     """
-    
     def __init__(self, config, insider_scraper, congress_scraper, news_analyzer):
         """
         Initialize the signal processor.
@@ -35,6 +34,20 @@ class SignalProcessor:
         self.strong_news_multiplier = config.getfloat('trading', 'strong_news_multiplier', fallback=2.0)
         self.congress_only_multiplier = config.getfloat('trading', 'congress_only_multiplier', fallback=1.0)
         self.insider_only_multiplier = config.getfloat('trading', 'insider_only_multiplier', fallback=0.5)
+        
+        # Read strategy settings from config
+        self.insider_strategy = config.get('trading', 'insider_strategy', fallback='inverse').lower()
+        self.congress_strategy = config.get('trading', 'congress_strategy', fallback='inverse').lower()
+          # Validate strategy settings
+        valid_strategies = ['inverse', 'normal', 'disabled']
+        if self.insider_strategy not in valid_strategies:
+            logger.warning(f"Invalid insider_strategy '{self.insider_strategy}', defaulting to 'inverse'")
+            self.insider_strategy = 'inverse'
+        if self.congress_strategy not in valid_strategies:
+            logger.warning(f"Invalid congress_strategy '{self.congress_strategy}', defaulting to 'inverse'")
+            self.congress_strategy = 'inverse'
+            
+        logger.info(f"Signal Processor initialized with strategies: Insider={self.insider_strategy}, Congress={self.congress_strategy}")
         
         # Thresholds for strong signals
         self.strong_news_threshold = 0.7
@@ -86,8 +99,7 @@ class SignalProcessor:
             # Skip if no signals
             if not (ticker_insider or ticker_congress or ticker_strong_news):
                 continue
-            
-            # Determine best signal based on hierarchy
+              # Determine best signal based on hierarchy
             best_signal = self._determine_best_signal(
                 ticker, ticker_insider, ticker_congress, ticker_news, ticker_strong_news
             )
@@ -100,7 +112,7 @@ class SignalProcessor:
         
     def _determine_best_signal(self, ticker, insider_trades, congress_trades, news, strong_news):
         """
-        Determine the best signal based on the signal hierarchy.
+        Determine the best signal based on the signal hierarchy and strategy settings.
         
         Args:
             ticker (str): Stock ticker symbol
@@ -112,6 +124,12 @@ class SignalProcessor:
         Returns:
             dict: Best signal with trading instructions or None
         """
+        # Filter signals based on strategy settings
+        if self.insider_strategy == 'disabled':
+            insider_trades = []
+        if self.congress_strategy == 'disabled':
+            congress_trades = []
+            
         # Start with empty signal
         best_signal = None
         confidence = 0
@@ -129,15 +147,27 @@ class SignalProcessor:
             other_signals = insider_trades + congress_trades
             other_signals.sort(key=lambda x: x.get('confidence', 0), reverse=True)
             
-            # Find a signal that matches the news signal direction
+            # Find a signal that matches the news signal direction (or opposite based on strategy)
             matching_signal = None
             for signal in other_signals:
-                if signal.get('signal') == news_signal.get('signal'):
+                signal_source = signal.get('source', '')
+                original_signal = signal.get('signal')
+                
+                # Apply strategy transformation
+                if signal_source == 'insider' and self.insider_strategy == 'inverse':
+                    transformed_signal = 'sell' if original_signal == 'buy' else 'buy'
+                elif signal_source == 'congress' and self.congress_strategy == 'inverse':
+                    transformed_signal = 'sell' if original_signal == 'buy' else 'buy'
+                else:
+                    # Normal strategy or unknown source
+                    transformed_signal = original_signal
+                
+                if transformed_signal == news_signal.get('signal'):
                     matching_signal = signal
                     break
             
             if matching_signal:
-                # Strong news + matching insider/congress signal
+                # Strong news + matching transformed signal
                 signal_direction = news_signal.get('signal')
                 confidence = (news_signal.get('confidence', 0) + matching_signal.get('confidence', 0)) / 2
                 source_count = 2
@@ -157,12 +187,20 @@ class SignalProcessor:
                 }
         
         # Check for congress only (medium priority)
-        if not best_signal and congress_trades:
+        if not best_signal and congress_trades and self.congress_strategy != 'disabled':
             # Get the most confident congress signal
             congress_trades.sort(key=lambda x: x.get('confidence', 0), reverse=True)
             congress_signal = congress_trades[0]
             
-            signal_direction = congress_signal.get('signal')
+            # Apply congress strategy
+            original_signal = congress_signal.get('signal')
+            if self.congress_strategy == 'inverse':
+                signal_direction = 'sell' if original_signal == 'buy' else 'buy'
+                strategy_note = " (inverse strategy)"
+            else:
+                signal_direction = original_signal
+                strategy_note = " (normal strategy)"
+            
             confidence = congress_signal.get('confidence', 0)
             source_count = 1
             position_multiplier = self.congress_only_multiplier
@@ -176,16 +214,24 @@ class SignalProcessor:
                 'sources': sources,
                 'source_count': source_count,
                 'date': datetime.now(),
-                'description': f"Congress trade by {congress_signal.get('politician', 'Unknown')}"
+                'description': f"Congress trade by {congress_signal.get('politician', 'Unknown')}{strategy_note}"
             }
         
         # Check for insider only (lowest priority)
-        if not best_signal and insider_trades:
+        if not best_signal and insider_trades and self.insider_strategy != 'disabled':
             # Get the most confident insider signal
             insider_trades.sort(key=lambda x: x.get('confidence', 0), reverse=True)
             insider_signal = insider_trades[0]
             
-            signal_direction = insider_signal.get('signal')
+            # Apply insider strategy
+            original_signal = insider_signal.get('signal')
+            if self.insider_strategy == 'inverse':
+                signal_direction = 'sell' if original_signal == 'buy' else 'buy'
+                strategy_note = " (inverse strategy)"
+            else:
+                signal_direction = original_signal
+                strategy_note = " (normal strategy)"
+            
             confidence = insider_signal.get('confidence', 0)
             source_count = 1
             position_multiplier = self.insider_only_multiplier
@@ -199,7 +245,7 @@ class SignalProcessor:
                 'sources': sources,
                 'source_count': source_count,
                 'date': datetime.now(),
-                'description': f"Insider trade by {insider_signal.get('insider', 'Unknown')} ({insider_signal.get('title', 'Unknown')})"
+                'description': f"Insider trade by {insider_signal.get('insider', 'Unknown')} ({insider_signal.get('title', 'Unknown')}){strategy_note}"
             }
         
         return best_signal

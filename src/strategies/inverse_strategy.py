@@ -15,7 +15,7 @@ class InverseStrategy:
     Class for implementing inverse trading strategy based on signals.
     Takes the opposite side of insider, congress, and news signals.
     """
-    def __init__(self, alpaca, signal_processor, config):
+    def __init__(self, alpaca, signal_processor, config, exit_manager=None):
         """
         Initialize the inverse trading strategy.
         
@@ -23,10 +23,12 @@ class InverseStrategy:
             alpaca (AlpacaWrapper): Alpaca API wrapper
             signal_processor (SignalProcessor): Signal processor
             config (ConfigParser): Configuration object
+            exit_manager (ExitStrategyManager): Exit strategy manager (optional)
         """
         self.alpaca = alpaca
         self.signal_processor = signal_processor
         self.config = config
+        self.exit_manager = exit_manager
         
         # Read portfolio parameters from config
         self.max_position_size_percent = config.getfloat('trading', 'max_position_size_percent', fallback=5.0)
@@ -42,6 +44,36 @@ class InverseStrategy:
         self.max_positions = 10
         self.min_cash_reserve = 0.2  # Keep at least 20% in cash
         
+    def should_skip_symbol_for_exit(self, symbol):
+        """
+        Check if we should skip trading a symbol because it's about to be closed by exit strategies.
+        
+        Args:
+            symbol (str): Stock symbol to check
+            
+        Returns:
+            bool: True if we should skip trading this symbol
+        """
+        if not self.exit_manager:
+            return False
+            
+        try:
+            # Get current positions
+            positions = self.alpaca.get_positions()
+            position = next((p for p in positions if p.symbol == symbol), None)
+            
+            if position:
+                # Check if this position would be closed by exit strategies
+                exit_reasons = self.exit_manager._check_position_exit_conditions(position)
+                if exit_reasons:
+                    logger.info(f"Skipping trades for {symbol} - position will be closed due to: {', '.join(exit_reasons)}")
+                    return True
+                    
+        except Exception as e:
+            logger.error(f"Error checking exit conditions for {symbol}: {e}")
+            
+        return False
+    
     def execute_trades(self, signals):
         """
         Execute trades based on the provided signals.
@@ -75,8 +107,7 @@ class InverseStrategy:
         max_position_value = portfolio_value * (self.max_position_size_percent / 100)
         
         executed_trades = []
-        
-        # Sort signals by confidence and source count
+          # Sort signals by confidence and source count
         signals.sort(key=lambda x: (x.get('source_count', 0), x.get('confidence', 0)), reverse=True)
         
         for signal in signals:
@@ -88,6 +119,14 @@ class InverseStrategy:
             # Skip low confidence signals
             if confidence < 0.5:
                 logger.info(f"Skipping low confidence signal for {ticker}")
+                continue
+                
+            # Skip symbols that are about to be closed by exit strategies
+            if self.should_skip_symbol_for_exit(ticker):
+                continue
+                
+            # Check if we should skip this symbol due to exit conditions
+            if self.should_skip_symbol_for_exit(ticker):
                 continue
                 
             # Check if we already have a position in this ticker
@@ -503,6 +542,10 @@ class InverseStrategy:
             # Skip low confidence signals
             if confidence < 0.5:
                 logger.info(f"Skipping low confidence signal for {ticker}")
+                continue
+                
+            # Check if we should skip this symbol due to exit conditions
+            if self.should_skip_symbol_for_exit(ticker):
                 continue
                 
             # Check if we already have an options position for this ticker

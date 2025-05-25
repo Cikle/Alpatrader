@@ -33,6 +33,30 @@ target_delta = 0.20
 # Target days to expiry for options contracts
 target_days_to_expiry = 30
 
+[exit_strategy]
+# Whether to use stop loss exits
+use_stop_loss = true
+# Stop loss percentage (negative number, e.g., -10 for 10% loss)
+stop_loss_percent = -10
+
+# Whether to use take profit exits
+use_take_profit = true
+# Take profit percentage (positive number, e.g., 20 for 20% gain)
+take_profit_percent = 20
+
+# Whether to use time-based exits
+use_time_based_exit = true
+# Maximum days to hold a position (0 = disabled)
+max_hold_days = 30
+
+# Whether to use trailing stop loss
+use_trailing_stop = false
+# Trailing stop percentage (positive number, e.g., 5 for 5% trailing)
+trailing_stop_percent = 5
+
+# Whether to check exit conditions during market hours only
+exit_during_market_hours_only = true
+
 [filters]
 # Sectors to monitor - match these with your watchlist
 sectors = technology,finance,healthcare
