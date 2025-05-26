@@ -201,8 +201,11 @@ def main():
                 display_portfolio_status(alpaca)
             
             # Sleep for 15 minutes before next cycle
-            time.sleep(15 * 60)
+            time.sleep(5 * 60)
             
+        except KeyboardInterrupt:
+            logger.info("Alpatrader shutting down due to user request (KeyboardInterrupt).")
+            break
         except Exception as e:
             logger.error(f"Error in main loop: {e}", exc_info=True)
             time.sleep(5 * 60)  # Wait 5 minutes on error
