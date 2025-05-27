@@ -679,7 +679,10 @@ class AlpacaWrapper:
                 return False
                 
             # Check if it's a valid equity (not crypto, etc.)
-            if asset.class_ != 'us_equity':
+            if hasattr(asset, 'asset_class') and asset.asset_class != 'us_equity':
+                logger.warning(f"Symbol {symbol} is not a US equity (class: {asset.asset_class})")
+                return False
+            elif hasattr(asset, 'class_') and asset.class_ != 'us_equity':
                 logger.warning(f"Symbol {symbol} is not a US equity (class: {asset.class_})")
                 return False
                 
