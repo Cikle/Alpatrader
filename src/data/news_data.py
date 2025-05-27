@@ -662,3 +662,71 @@ class NewsSentimentAnalyzer:
                 
         except Exception as e:
             logger.error(f"Error caching news: {e}", exc_info=True)
+    
+    def get_news_sentiment(self, ticker):
+        """
+        Get news sentiment for a ticker with rate limiting protection.
+        
+        Args:
+            ticker (str): Stock ticker symbol
+            
+        Returns:
+            dict: News sentiment data or None if error/rate limited
+        """
+        try:
+            # Check cache first
+            cached_news = self._get_cached_news(ticker)
+            if cached_news:
+                logger.debug(f"Using cached news for {ticker}")
+                return cached_news
+            
+            # Rate limiting - add delay between API calls
+            import time
+            time.sleep(0.5)  # 500ms delay between calls
+            
+            # Get news headlines
+            headlines = self._fetch_news_headlines(ticker)
+            if not headlines:
+                logger.info(f"No news found for {ticker}")
+                return None
+                
+            # Get sentiment for headlines with error handling
+            sentiment_scores = []
+            for headline in headlines[:10]:  # Limit to 10 headlines to reduce API calls
+                try:
+                    sentiment = self._get_headline_sentiment(headline, ticker)
+                    if sentiment:
+                        sentiment_scores.append(sentiment)
+                except Exception as e:
+                    if "403" in str(e) or "rate limit" in str(e).lower():
+                        logger.warning(f"Rate limit hit for {ticker}, using existing sentiment scores")
+                        break
+                    logger.error(f"Error getting sentiment for headline: {e}")
+                    continue
+            
+            if not sentiment_scores:
+                logger.warning(f"No sentiment scores obtained for {ticker}")
+                return None
+            
+            # Calculate overall sentiment
+            avg_sentiment = sum(sentiment_scores) / len(sentiment_scores)
+            
+            result = {
+                'ticker': ticker,
+                'sentiment_score': avg_sentiment,
+                'num_articles': len(headlines),
+                'num_scored': len(sentiment_scores),
+                'timestamp': datetime.now()
+            }
+            
+            # Cache the result
+            self._cache_news_data(ticker, result)
+            
+            return result
+            
+        except Exception as e:
+            if "403" in str(e) or "rate limit" in str(e).lower():
+                logger.warning(f"Rate limit exceeded for {ticker}, skipping sentiment analysis")
+                return None
+            logger.error(f"Error getting news sentiment for {ticker}: {e}")
+            return None

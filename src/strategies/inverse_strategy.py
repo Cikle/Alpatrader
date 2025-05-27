@@ -37,6 +37,9 @@ class InverseStrategy:
         self.use_margin = config.getboolean('trading', 'use_margin', fallback=False)
         self.max_leverage = config.getfloat('trading', 'max_leverage', fallback=1.0)
         
+        # Read short selling configuration
+        self.allow_short_selling = config.getboolean('trading', 'allow_short_selling', fallback=True)
+        
         # Read options parameters from config
         self.use_options = config.getboolean('options', 'use_options', fallback=True)
         self.min_option_confidence = config.getfloat('options', 'min_option_confidence', fallback=0.7)
@@ -208,6 +211,11 @@ class InverseStrategy:
                 # No existing position, open a new one
                 action = "BUY" if signal_direction == "BULLISH" else "SELL"
                 
+                # Skip short selling if not allowed
+                if action == "SELL" and not self.allow_short_selling:
+                    logger.info(f"Skipping short sell order for {ticker} - short selling disabled")
+                    continue
+                
                 # Execute trade
                 trade_result = self._execute_trade(ticker, action, shares)
                 if trade_result:
@@ -234,7 +242,7 @@ class InverseStrategy:
                     entry_price = cost_basis / abs(qty) if qty != 0 else 0
                     current_price = float(position.current_price)
                     unrealized_pl = float(position.unrealized_pl)
-                    unrealized_plpc = float(position.unrealized_plpc)
+                    unrealized_plpc = float(position.unrealized.plpc)
                     
                     side = 'Long' if qty > 0 else 'Short'
                     
