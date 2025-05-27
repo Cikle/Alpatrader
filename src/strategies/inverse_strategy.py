@@ -234,7 +234,7 @@ class InverseStrategy:
                     entry_price = cost_basis / abs(qty) if qty != 0 else 0
                     current_price = float(position.current_price)
                     unrealized_pl = float(position.unrealized_pl)
-                    unrealized_plpc = float(position.unrealized.plpc)
+                    unrealized_plpc = float(position.unrealized_plpc)
                     
                     side = 'Long' if qty > 0 else 'Short'
                     

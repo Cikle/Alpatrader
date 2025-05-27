@@ -77,13 +77,18 @@ class APIErrorHandler:
             "Sen. Michael Wilson"
         ]
         
-        # Sample companies and tickers
+        # Sample companies and tickers - REAL STOCKS under $40
         companies = [
-            {"company": "Tech Innovations Inc.", "ticker": "TECH"},
-            {"company": "Global Healthcare Corp", "ticker": "HLTH"},
-            {"company": "American Energy Solutions", "ticker": "NRGY"},
-            {"company": "Financial Services Group", "ticker": "FINC"},
-            {"company": "Consumer Products Ltd", "ticker": "CSMR"}
+            {"company": "Ford Motor Company", "ticker": "F"},
+            {"company": "Siriusxm Holdings Inc", "ticker": "SIRI"},
+            {"company": "Nokia Corporation", "ticker": "NOK"},
+            {"company": "Banco Bradesco SA", "ticker": "BBD"},
+            {"company": "Vale SA", "ticker": "VALE"},
+            {"company": "Itau Unibanco Holding SA", "ticker": "ITUB"},
+            {"company": "Ericsson", "ticker": "ERIC"},
+            {"company": "AT&T Inc", "ticker": "T"},
+            {"company": "Petrobras", "ticker": "PBR"},
+            {"company": "Vodafone Group PLC", "ticker": "VOD"}
         ]
         
         # Sample transaction types
