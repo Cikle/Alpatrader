@@ -121,6 +121,11 @@ class InverseStrategy:
                 logger.info(f"Skipping low confidence signal for {ticker}")
                 continue
                 
+            # Validate symbol exists and is tradeable before proceeding
+            if not self.alpaca.validate_symbol(ticker):
+                logger.warning(f"Skipping invalid or non-tradeable symbol: {ticker}")
+                continue
+                
             # Skip symbols that are about to be closed by exit strategies
             if self.should_skip_symbol_for_exit(ticker):
                 continue
@@ -144,8 +149,9 @@ class InverseStrategy:
             # Calculate number of shares
             shares = int(position_value / current_price)
             
-            if shares <= 0:
-                logger.warning(f"Calculated position size for {ticker} is too small")
+            # Check minimum position requirements (Alpaca typically requires $1+ per order)
+            if shares <= 0 or (shares * current_price) < 1.0:
+                logger.warning(f"Calculated position size for {ticker} is too small: {shares} shares worth ${shares * current_price:.2f}")
                 continue
                 
             # Determine action based on signal and existing position
@@ -542,6 +548,11 @@ class InverseStrategy:
             # Skip low confidence signals
             if confidence < 0.5:
                 logger.info(f"Skipping low confidence signal for {ticker}")
+                continue
+                
+            # Validate symbol exists and is tradeable before proceeding
+            if not self.alpaca.validate_symbol(ticker):
+                logger.warning(f"Skipping invalid or non-tradeable symbol for options: {ticker}")
                 continue
                 
             # Check if we should skip this symbol due to exit conditions

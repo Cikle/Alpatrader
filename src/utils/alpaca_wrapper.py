@@ -657,23 +657,51 @@ class AlpacaWrapper:
     
     def _check_symbol_exists(self, symbol):
         """
-        Check if a symbol exists.
+        Check if a symbol exists and is tradable.
         
         Args:
             symbol (str): Stock ticker symbol
             
         Returns:
-            bool: True if symbol exists, False otherwise
+            bool: True if symbol exists and is tradable, False otherwise
         """
         try:
-            # In a real implementation, we would check with the API
-            # For development, assume it exists
+            if not self.api:
+                logger.error("Alpaca API not initialized")
+                return False
+                
+            # Get asset information
+            asset = self.api.get_asset(symbol)
+            
+            # Check if the asset is tradable
+            if not asset.tradable:
+                logger.warning(f"Symbol {symbol} exists but is not tradable")
+                return False
+                
+            # Check if it's a valid equity (not crypto, etc.)
+            if asset.class_ != 'us_equity':
+                logger.warning(f"Symbol {symbol} is not a US equity (class: {asset.class_})")
+                return False
+                
+            logger.debug(f"Symbol {symbol} is valid and tradable")
             return True
             
         except Exception as e:
-            logger.error(f"Error checking if symbol {symbol} exists: {e}", exc_info=True)
+            logger.warning(f"Symbol {symbol} not found or not accessible: {e}")
             return False
+    
+    def validate_symbol(self, symbol):
+        """
+        Validate and return True if symbol is tradeable.
         
+        Args:
+            symbol (str): Stock ticker symbol
+            
+        Returns:
+            bool: True if symbol is valid and tradeable
+        """
+        return self._check_symbol_exists(symbol)
+    
     def _get_sample_option_contract(self, symbol, right, target_delta, days_to_expiry):
         """
         Generate a sample option contract when API fails to find one.
