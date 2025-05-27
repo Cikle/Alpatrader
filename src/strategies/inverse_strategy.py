@@ -33,6 +33,10 @@ class InverseStrategy:
         # Read portfolio parameters from config
         self.max_position_size_percent = config.getfloat('trading', 'max_position_size_percent', fallback=5.0)
         
+        # Read leverage parameters from config
+        self.use_margin = config.getboolean('trading', 'use_margin', fallback=False)
+        self.max_leverage = config.getfloat('trading', 'max_leverage', fallback=1.0)
+        
         # Read options parameters from config
         self.use_options = config.getboolean('options', 'use_options', fallback=True)
         self.min_option_confidence = config.getfloat('options', 'min_option_confidence', fallback=0.7)
@@ -100,11 +104,19 @@ class InverseStrategy:
         portfolio_value = float(account.equity)
         buying_power = float(account.buying_power)
         
+        # Use leverage if enabled and available
+        effective_buying_power = buying_power
+        if self.use_margin and buying_power > portfolio_value:
+            # Margin is available - limit leverage to our max setting
+            max_leveraged_value = portfolio_value * self.max_leverage
+            effective_buying_power = min(buying_power, max_leveraged_value)
+            logger.info(f"Using leverage: Portfolio ${portfolio_value:.2f}, Available ${buying_power:.2f}, Using ${effective_buying_power:.2f}")
+        
         # Get existing positions
         positions = self.alpaca.get_positions()
         
-        # Calculate max new position size
-        max_position_value = portfolio_value * (self.max_position_size_percent / 100)
+        # Calculate max new position size based on effective buying power
+        max_position_value = effective_buying_power * (self.max_position_size_percent / 100)
         
         executed_trades = []
           # Sort signals by confidence and source count
@@ -222,7 +234,7 @@ class InverseStrategy:
                     entry_price = cost_basis / abs(qty) if qty != 0 else 0
                     current_price = float(position.current_price)
                     unrealized_pl = float(position.unrealized_pl)
-                    unrealized_plpc = float(position.unrealized_plpc)
+                    unrealized_plpc = float(position.unrealized.plpc)
                     
                     side = 'Long' if qty > 0 else 'Short'
                     
